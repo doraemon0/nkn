@@ -103,9 +103,11 @@ func (ps *ProposerService) ProposerRoutine(vType voting.VotingContentType) {
 	if finalHash.CompareTo(content.Hash()) != 0 {
 		content, err = current.GetVotingContentFromPool(finalHash, votingHeight)
 		if err != nil {
-			log.Warn("get final entity error")
+			log.Warnf("get final entity error, hash: %s, type: %d, votingHeight: %d",
+				BytesToHexString(finalHash.ToArrayReverse()), vType, votingHeight)
 			return
 		}
+		log.Info("mind changing success")
 	}
 	// process final block and signature chain
 	switch vType {
@@ -124,7 +126,8 @@ func (ps *ProposerService) ProposerRoutine(vType voting.VotingContentType) {
 		ps.blockProposer[votingHeight] = pbk
 		ps.Unlock()
 		sigChainTxnHash := content.Hash()
-		log.Info("sigchain transaction consensus: ", BytesToHexString(sigChainTxnHash.ToArray()))
+		log.Infof("sigchain transaction consensus: %s, %s will be block proposer for height %d",
+			BytesToHexString(sigChainTxnHash.ToArrayReverse()), BytesToHexString(pbk), votingHeight)
 	case voting.BlockVote:
 		if block, ok := content.(*ledger.Block); ok {
 			err = ledger.DefaultLedger.Blockchain.AddBlock(block)
@@ -164,17 +167,20 @@ func (ps *ProposerService) SendNewProposal(vType voting.VotingContentType) (voti
 	}
 	hash := content.Hash()
 	votingPool := current.GetVotingPool()
+	log.Info("local mind: ", BytesToHexString(hash.ToArrayReverse()))
 	if mind, ok := votingPool.GetMind(votingHeight); ok {
-		// if local hash doesn't better than
+		// if local mind doesn't better than neighbor mind then change.
 		if mind.CompareTo(hash) == -1 {
 			hash = mind
+			log.Info("mind set to neighbor mind: ", BytesToHexString(hash.ToArrayReverse()))
 		}
 	} else {
 		// set mind if it has not been set
 		votingPool.ChangeMind(votingHeight, hash)
+		log.Info("mind set to local mind: ", BytesToHexString(hash.ToArrayReverse()))
 	}
 	if !current.HasSelfState(hash, voting.ProposalSent) {
-		log.Infof("proposing hash: %s, type: %d", BytesToHexString(hash.ToArray()), vType)
+		log.Infof("proposing hash: %s, type: %d", BytesToHexString(hash.ToArrayReverse()), vType)
 		// create new proposal
 		proposalMsg := NewProposal(&hash, votingHeight, vType)
 		// get nodes which should receive proposal message
@@ -214,7 +220,9 @@ func (ps *ProposerService) ProduceNewBlock() {
 		log.Error("sending consensus message error: ", err)
 	}
 	// update mind of local node
-	votingPool.ChangeMind(votingHeight, block.Hash())
+	blockHash := block.Hash()
+	votingPool.ChangeMind(votingHeight, blockHash)
+	log.Info("when produce new block mind set to: ", BytesToHexString(blockHash.ToArrayReverse()))
 }
 
 func (ps *ProposerService) IsBlockProposer() bool {
@@ -340,8 +348,10 @@ func (ps *ProposerService) BuildBlock() (*ledger.Block, error) {
 	txnHashList = append(txnHashList, coinbase.Hash())
 	txns := ps.txnCollector.Collect()
 	for txnHash, txn := range txns {
-		txnList = append(txnList, txn)
-		txnHashList = append(txnHashList, txnHash)
+		if !ledger.DefaultLedger.Store.IsTxHashDuplicate(txnHash) {
+			txnList = append(txnList, txn)
+			txnHashList = append(txnHashList, txnHash)
+		}
 	}
 	txnRoot, err := crypto.ComputeRoot(txnHashList)
 	if err != nil {
@@ -411,12 +421,12 @@ func (ps *ProposerService) HandleBlockFloodingMsg(bfMsg *BlockFlooding, sender *
 	height := bfMsg.block.Header.Height
 	if height < votingHeight {
 		log.Warnf("receive out of date block, consensus height: %d, received block height: %d,"+
-			" hash: %s\n", votingHeight, height, BytesToHexString(blockHash.ToArray()))
+			" hash: %s\n", votingHeight, height, BytesToHexString(blockHash.ToArrayReverse()))
 		return
 	}
 	// returns if receive duplicate block
 	if current.HasSelfState(blockHash, voting.FloodingFinished) {
-		log.Warn("Duplicate block received for hash: ", BytesToHexString(blockHash.ToArray()))
+		log.Warn("Duplicate block received for hash: ", BytesToHexString(blockHash.ToArrayReverse()))
 		return
 	}
 	// set state for flooding block
@@ -437,7 +447,7 @@ func (ps *ProposerService) HandleRequestMsg(req *Request, sender *crypto.PubKey)
 	height := req.height
 	if height < votingHeight {
 		log.Warnf("receive invalid request, consensus height: %d, request height: %d,"+
-			" hash: %s\n", votingHeight, height, BytesToHexString(hash.ToArray()))
+			" hash: %s\n", votingHeight, height, BytesToHexString(hash.ToArrayReverse()))
 		return
 	}
 	// TODO check if already sent Proposal to sender
@@ -446,13 +456,13 @@ func (ps *ProposerService) HandleRequestMsg(req *Request, sender *crypto.PubKey)
 		return
 	}
 	if !current.HasSelfState(hash, voting.ProposalSent) {
-		log.Warn("receive invalid request for hash: ", BytesToHexString(hash.ToArray()))
+		log.Warn("receive invalid request for hash: ", BytesToHexString(hash.ToArrayReverse()))
 		return
 	}
 	nodeID := publickKeyToNodeID(sender)
 	// returns if receive duplicate request
 	if current.HasNeighborState(nodeID, hash, voting.RequestReceived) {
-		log.Warn("duplicate request received for hash: ", BytesToHexString(hash.ToArray()))
+		log.Warn("duplicate request received for hash: ", BytesToHexString(hash.ToArrayReverse()))
 		return
 	}
 	// set state for request
@@ -502,7 +512,7 @@ func (ps *ProposerService) HandleResponseMsg(resp *Response, sender *crypto.PubK
 	height := resp.height
 	if height != votingHeight {
 		log.Warnf("receive invalid response, consensus height: %d, response height: %d,"+
-			" hash: %s\n", votingHeight, height, BytesToHexString(hash.ToArray()))
+			" hash: %s\n", votingHeight, height, BytesToHexString(hash.ToArrayReverse()))
 		return
 	}
 	nodeID := publickKeyToNodeID(sender)
@@ -513,7 +523,7 @@ func (ps *ProposerService) HandleResponseMsg(resp *Response, sender *crypto.PubK
 	}
 	// returns if receive duplicate response
 	if current.HasNeighborState(nodeID, *hash, voting.ProposalReceived) {
-		log.Warn("duplicate response received for hash: ", BytesToHexString(hash.ToArray()))
+		log.Warn("duplicate response received for hash: ", BytesToHexString(hash.ToArrayReverse()))
 		return
 	}
 	// TODO check if the sender is requested neighbor node
@@ -534,7 +544,7 @@ func (ps *ProposerService) HandleProposalMsg(proposal *Proposal, sender *crypto.
 	height := proposal.height
 	if height < votingHeight-1 {
 		log.Warnf("receive invalid proposal, consensus height: %d, proposal height: %d,"+
-			" hash: %s\n", votingHeight, height, BytesToHexString(hash.ToArray()))
+			" hash: %s\n", votingHeight, height, BytesToHexString(hash.ToArrayReverse()))
 		return
 	}
 	// TODO check if the sender is neighbor
@@ -548,12 +558,12 @@ func (ps *ProposerService) HandleProposalMsg(proposal *Proposal, sender *crypto.
 		ps.SendConsensusMsg(requestMsg, nodes)
 		current.SetNeighborState(nodeID, hash, voting.RequestSent)
 		log.Warnf("doesn't contain hash in local cache, requesting it from neighbor %s\n",
-			BytesToHexString(hash.ToArray()))
+			BytesToHexString(hash.ToArrayReverse()))
 		return
 	}
 	// returns if receive duplicated proposal
 	if current.HasNeighborState(nodeID, hash, voting.ProposalReceived) {
-		log.Warn("duplicate proposal received for hash: ", BytesToHexString(hash.ToArray()))
+		log.Warn("duplicate proposal received for hash: ", BytesToHexString(hash.ToArrayReverse()))
 		return
 	}
 	// set state when receive a proposal from a neighbor
@@ -570,6 +580,8 @@ func (ps *ProposerService) HandleProposalMsg(proposal *Proposal, sender *crypto.
 		// When current mind has been set, if voting result is different with
 		// current mind then do mind changing.
 		if mind.CompareTo(*maybeFinalHash) != 0 {
+			log.Info("when receive mindchanging mind change to neighbor mind: ",
+				BytesToHexString(maybeFinalHash.ToArrayReverse()))
 			history := currentVotingPool.ChangeMind(votingHeight, *maybeFinalHash)
 			// generate mind changing message
 			mindChangingMsg := NewMindChanging(maybeFinalHash, votingHeight, votingType)
@@ -585,6 +597,8 @@ func (ps *ProposerService) HandleProposalMsg(proposal *Proposal, sender *crypto.
 	} else {
 		// Set mind if current mind has not been set.
 		currentVotingPool.ChangeMind(votingHeight, *maybeFinalHash)
+		log.Info("when receive proposal mind set to neighbor mind: ",
+			BytesToHexString(maybeFinalHash.ToArrayReverse()))
 	}
 }
 
@@ -596,7 +610,7 @@ func (ps *ProposerService) HandleMindChangingMsg(mindChanging *MindChanging, sen
 	height := mindChanging.height
 	if height < votingHeight {
 		log.Warnf("receive invalid mind changing, consensus height: %d, mind changing height: %d,"+
-			" hash: %s\n", votingHeight, height, BytesToHexString(hash.ToArray()))
+			" hash: %s\n", votingHeight, height, BytesToHexString(hash.ToArrayReverse()))
 		return
 	}
 	// TODO check if the sender is neighbor
@@ -619,6 +633,8 @@ func (ps *ProposerService) HandleMindChangingMsg(mindChanging *MindChanging, sen
 		// When current mind has been set, if voting result is different with
 		// current mind then do mind changing.
 		if mind.CompareTo(*maybeFinalHash) != 0 {
+			log.Info("when receive proposal mind changed to neighbor mind: ",
+				BytesToHexString(maybeFinalHash.ToArrayReverse()))
 			history := currentVotingPool.ChangeMind(votingHeight, *maybeFinalHash)
 			// generate mind changing message
 			mindChangingMsg := NewMindChanging(maybeFinalHash, votingHeight, votingType)
