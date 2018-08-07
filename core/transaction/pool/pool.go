@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"errors"
 	"github.com/nknorg/nkn/common"
 	"github.com/nknorg/nkn/core/ledger"
 	. "github.com/nknorg/nkn/core/transaction"
@@ -23,6 +24,7 @@ type TxnPool struct {
 	txnList       map[common.Uint256]*Transaction   // transaction which have been verified will put into this map
 	issueSummary  map[common.Uint256]common.Fixed64 // transaction which pass the verify will summary the amout to this map
 	inputUTXOList map[string]*Transaction           // transaction which pass the verify will add the UTXO to this map
+	prepaidList   map[string]struct{}
 }
 
 func NewTxnPool() *TxnPool {
@@ -31,6 +33,7 @@ func NewTxnPool() *TxnPool {
 		inputUTXOList: make(map[string]*Transaction),
 		issueSummary:  make(map[common.Uint256]common.Fixed64),
 		txnList:       make(map[common.Uint256]*Transaction),
+		prepaidList:   make(map[string]struct{}),
 	}
 }
 
@@ -46,10 +49,11 @@ func (tp *TxnPool) AppendTxnPool(txn *Transaction) ErrCode {
 		log.Info("Transaction verification with ledger failed", txn.Hash())
 		return errCode
 	}
-	//verify transaction by pool with lock
-	if ok := tp.verifyTransactionWithTxnPool(txn); !ok {
-		return ErrSummaryAsset
+	if errCode := tp.verifyTransactionWithTxnPool(txn); errCode != ErrNoError {
+		log.Info("Transaction verification with transaction pool failed", txn.Hash())
+		return errCode
 	}
+
 	//add the transaction to process scope
 	tp.addtxnList(txn)
 
@@ -97,6 +101,7 @@ func (tp *TxnPool) CleanSubmittedTransactions(txns []*Transaction) error {
 	tp.cleanTransactionList(txns)
 	tp.cleanUTXOList(txns)
 	tp.cleanIssueSummary(txns)
+	tp.cleanPrepaidList(txns)
 	return nil
 }
 
@@ -120,20 +125,46 @@ func (tp *TxnPool) GetAllTransactions() map[common.Uint256]*Transaction {
 }
 
 //verify transaction with txnpool
-func (tp *TxnPool) verifyTransactionWithTxnPool(txn *Transaction) bool {
-	//check weather have duplicate UTXO input,if occurs duplicate, just keep the latest txn.
-	ok, duplicateTxn := tp.apendToUTXOPool(txn)
-	if !ok && duplicateTxn != nil {
-		log.Info(fmt.Sprintf("txn=%x duplicateTxn UTXO occurs with txn in pool=%x,keep the latest one.", txn.Hash(), duplicateTxn.Hash()))
-		tp.removeTransaction(duplicateTxn)
+func (tp *TxnPool) verifyTransactionWithTxnPool(txn *Transaction) ErrCode {
+	// check if the transaction includes double spent UTXO inputs
+	if err := tp.apendToUTXOPool(txn); err != nil {
+		log.Info(err)
+		return ErrDoubleSpend
+	}
+	if err := tp.checkPrepaidList(txn); err != nil {
+		log.Info(err)
+		return ErrDuplicatePrepaid
 	}
 	//check issue transaction weather occur exceed issue range.
 	if ok := tp.summaryAssetIssueAmount(txn); !ok {
 		log.Info(fmt.Sprintf("Check summary Asset Issue Amount failed with txn=%x", txn.Hash()))
 		tp.removeTransaction(txn)
-		return false
+		return ErrSummaryAsset
 	}
-	return true
+
+	return ErrNoError
+}
+
+//check and add to utxo list pool
+func (this *TxnPool) apendToUTXOPool(txn *Transaction) error {
+	reference, err := txn.GetReference()
+	if err != nil {
+		return err
+	}
+	inputs := []*TxnInput{}
+	for k := range reference {
+		if txn := this.getInputUTXOList(k); txn != nil {
+			return NewErr(fmt.Sprintf("double spent UTXO inputs detected, "+
+				"transaction hash: %x, input: %s, index: %s",
+				txn.Hash(), k.ToString()[:64], k.ToString()[64:]))
+		}
+		inputs = append(inputs, k)
+	}
+	for _, v := range inputs {
+		this.addInputUTXOList(txn, v)
+	}
+
+	return nil
 }
 
 //remove from associated map
@@ -157,22 +188,6 @@ func (tp *TxnPool) removeTransaction(txn *Transaction) {
 	for k, delta := range transactionResult {
 		tp.decrAssetIssueAmountSummary(k, delta)
 	}
-}
-
-//check and add to utxo list pool
-func (tp *TxnPool) apendToUTXOPool(txn *Transaction) (bool, *Transaction) {
-	reference, err := txn.GetReference()
-	if err != nil {
-		return false, nil
-	}
-	for k, _ := range reference {
-		t := tp.getInputUTXOList(k)
-		if t != nil {
-			return false, t
-		}
-		tp.addInputUTXOList(txn, k)
-	}
-	return true, nil
 }
 
 //clean txnpool utxo map
@@ -359,4 +374,36 @@ func isHashExist(hash common.Uint256, hashSet []common.Uint256) bool {
 	}
 
 	return false
+}
+
+func (tp *TxnPool) checkPrepaidList(txn *Transaction) error {
+	switch txn.TxType {
+	case Prepaid:
+		programHashes, err := txn.GetProgramHashes()
+		if err != nil {
+			return err
+		}
+		str := common.BytesToHexString(programHashes[0].ToArrayReverse())
+		if _, ok := tp.prepaidList[str]; ok {
+			return errors.New("duplicated prepaid transaction detected")
+		}
+		tp.prepaidList[str] = struct{}{}
+	}
+
+	return nil
+}
+
+func (tp *TxnPool) cleanPrepaidList(txns []*Transaction) error {
+	for _, txn := range txns {
+		switch txn.TxType {
+		case Prepaid:
+			programHashes, err := txn.GetProgramHashes()
+			if err != nil {
+				return err
+			}
+			str := common.BytesToHexString(programHashes[0].ToArrayReverse())
+			delete(tp.prepaidList, str)
+		}
+	}
+	return nil
 }

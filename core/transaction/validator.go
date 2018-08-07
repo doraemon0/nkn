@@ -207,7 +207,7 @@ func CheckAssetPrecision(Tx *Transaction) error {
 }
 
 func CheckTransactionBalance(txn *Transaction) error {
-	if txn.TxType == Coinbase || txn.TxType == Prepaid ||
+	if txn.TxType == Coinbase || txn.TxType == Prepaid || txn.TxType == Pay ||
 		txn.TxType == Withdraw || txn.TxType == Commit {
 		return nil
 	}
@@ -287,6 +287,7 @@ func CheckTransactionPayload(txn *Transaction) error {
 	case *payload.TransferAsset:
 	case *payload.Coinbase:
 	case *payload.Commit:
+	case *payload.Pay:
 	case *payload.Prepaid:
 		var inputAmount, outputAmount Fixed64
 		for _, input := range txn.Inputs {

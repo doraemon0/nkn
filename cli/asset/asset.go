@@ -78,7 +78,7 @@ func assetAction(c *cli.Context) error {
 			fmt.Println("rates is required with [--rates]")
 			return nil
 		}
-		resp, err = client.Call(Address(), "prepaidasset", 0, map[string]interface{}{"assetid": parseAssetID(c), "value": value, "rates": rates})
+		resp, err = client.Call(Address(), "prepaid", 0, map[string]interface{}{"value": value, "rates": rates})
 	case c.Bool("withdraw"):
 		resp, err = client.Call(Address(), "withdrawasset", 0, map[string]interface{}{"assetid": parseAssetID(c), "value": value})
 	default:
@@ -131,16 +131,16 @@ func NewCommand() *cli.Command {
 				Usage: "wallet password",
 			},
 			cli.StringFlag{
-				Name:  "asset, a",
-				Usage: "uniq id for asset",
-			},
-			cli.StringFlag{
 				Name:  "name",
 				Usage: "asset name",
 			},
 			cli.StringFlag{
 				Name:  "to",
 				Usage: "asset to whom",
+			},
+			cli.StringFlag{
+				Name:  "asset",
+				Usage: "asset ID",
 			},
 			cli.StringFlag{
 				Name:  "value, v",

@@ -732,7 +732,13 @@ func (cs *ChainStore) persist(b *Block) error {
 			if err != nil || len(pHash) == 0 {
 				return err
 			}
-			err = cs.UpdatePrepaidInfo(pHash[0], prepaidPld.Amount, prepaidPld.Rates)
+			err = cs.IncreasePrepaidInfo(pHash[0], prepaidPld.Amount, prepaidPld.Rates)
+			if err != nil {
+				return err
+			}
+		case tx.Pay:
+			payPld := b.Transactions[i].Payload.(*payload.Pay)
+			err = cs.DecreasePrepaidInfo(payPld.Payer, payPld.Amount)
 			if err != nil {
 				return err
 			}
@@ -1421,7 +1427,7 @@ func (cs *ChainStore) GetStorage(key []byte) ([]byte, error) {
 	return bData, nil
 }
 
-func (cs *ChainStore) UpdatePrepaidInfo(programHash Uint160, amount, rates Fixed64) error {
+func (cs *ChainStore) IncreasePrepaidInfo(programHash Uint160, amount, rates Fixed64) error {
 	var err error
 	newAmount := amount
 	// key: prefix + programHash
@@ -1438,6 +1444,40 @@ func (cs *ChainStore) UpdatePrepaidInfo(programHash Uint160, amount, rates Fixed
 		return err
 	}
 	err = rates.Serialize(value)
+	if err != nil {
+		return err
+	}
+
+	err = cs.st.Put(key, value.Bytes())
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (cs *ChainStore) DecreasePrepaidInfo(programHash Uint160, amount Fixed64) error {
+	var err error
+	newAmount := amount
+	// key: prefix + programHash
+	key := append([]byte{byte(ST_Prepaid)}, programHash.ToArray()...)
+
+	// value: decrease existed prepaid amount
+	value := bytes.NewBuffer(nil)
+	oldAmount, oldRates, err := cs.GetPrepaidInfo(programHash)
+	if err != nil {
+		return err
+	}
+	if *oldAmount < amount {
+		log.Error("asset not enough")
+		return errors.New("asset not enough")
+	}
+	newAmount = *oldAmount - amount
+	err = newAmount.Serialize(value)
+	if err != nil {
+		return err
+	}
+	err = oldRates.Serialize(value)
 	if err != nil {
 		return err
 	}

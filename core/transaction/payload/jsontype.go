@@ -28,3 +28,8 @@ type CommitInfo struct {
 	SigChain  string `json:"sigChain"`
 	Submitter string `json:"submitter"`
 }
+
+type PayInfo struct {
+	Payer  string `json:"payer"`
+	Amount string `json:"amount"`
+}

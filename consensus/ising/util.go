@@ -69,3 +69,20 @@ func GetTotalVotingWeight(node protocol.Noder) int {
 
 	return total
 }
+
+func PublicKeyToScriptHash(publicKey []byte) (*Uint160, error) {
+	rawPubkey, err := crypto.DecodePoint(publicKey)
+	if err != nil {
+		return nil, err
+	}
+	script, err := contract.CreateSignatureRedeemScript(rawPubkey)
+	if err != nil {
+		return nil, err
+	}
+	scriptHash, err := ToCodeHash(script)
+	if err != nil {
+		return nil, err
+	}
+
+	return &scriptHash, nil
+}

@@ -11,7 +11,7 @@ const (
 )
 
 type hashCache struct {
-	sync.RWMutex
+	sync.Mutex
 	cap    int
 	list   map[Uint256]struct{}
 	hashes []Uint256

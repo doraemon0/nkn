@@ -113,6 +113,11 @@ func NewPrepaidTransaction(inputs []*TxnInput, changes *TxnOutput, assetID Uint2
 		Rates:  r,
 	}
 
+	var outputs []*TxnOutput
+	if changes != nil {
+		outputs = append(outputs, changes)
+	}
+
 	return &Transaction{
 		TxType:  Prepaid,
 		Payload: prepaidPayload,
@@ -123,7 +128,7 @@ func NewPrepaidTransaction(inputs []*TxnInput, changes *TxnOutput, assetID Uint2
 			},
 		},
 		Inputs:   inputs,
-		Outputs:  []*TxnOutput{changes},
+		Outputs:  outputs,
 		Programs: []*program.Program{},
 	}, nil
 }

@@ -25,6 +25,7 @@ type TransactionType byte
 
 const (
 	Coinbase      TransactionType = 0x00
+	Pay           TransactionType = 0x01
 	TransferAsset TransactionType = 0x10
 	RegisterAsset TransactionType = 0x11
 	IssueAsset    TransactionType = 0x12
@@ -205,6 +206,8 @@ func (tx *Transaction) DeserializeUnsignedWithoutType(r io.Reader) error {
 		tx.Payload = new(payload.Withdraw)
 	case Commit:
 		tx.Payload = new(payload.Commit)
+	case Pay:
+		tx.Payload = new(payload.Pay)
 	default:
 		return errors.New("[Transaction],invalide transaction type.")
 	}
@@ -585,6 +588,8 @@ func (tx *Transaction) UnmarshalJson(data []byte) error {
 		tx.Payload = new(payload.Withdraw)
 	case Commit:
 		tx.Payload = new(payload.Commit)
+	case Pay:
+		tx.Payload = new(payload.Pay)
 	default:
 		return errors.New("[Transaction],invalide transaction type.")
 	}

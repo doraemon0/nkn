@@ -546,34 +546,24 @@ func sendToAddress(s Serverer, params map[string]interface{}) map[string]interfa
 	return respPacking(common.BytesToHexString(txHash.ToArrayReverse()), SUCCESS)
 }
 
-// prepaid prepaid asset to system
-// params: ["assetid":<assetid>, "vaule":<value>, "rates":<rates>]
+// prepaid asset to system
+// params: ["vaule":<value>, "rates":<rates>]
 // return: {"result":<result>, "error":<errcode>}
-func prepaidAsset(s Serverer, params map[string]interface{}) map[string]interface{} {
-	if len(params) < 3 {
+func prepaid(s Serverer, params map[string]interface{}) map[string]interface{} {
+	if len(params) < 2 {
 		return respPacking(nil, INVALID_PARAMS)
 	}
 
-	asset, ok1 := params["assetid"].(string)
-	assetValue, ok2 := params["value"].(string)
-	rates, ok3 := params["rates"].(string)
-	if !ok1 || !ok2 || !ok3 {
+	assetValue, ok1 := params["value"].(string)
+	rates, ok2 := params["rates"].(string)
+	if !ok1 || !ok2 {
 		return respPacking(nil, INVALID_PARAMS)
 	}
-
 	wallet, err := s.GetWallet()
 	if err != nil {
 		return respPacking(nil, INTERNAL_ERROR)
 	}
-	tmp, err := common.HexStringToBytesReverse(asset)
-	if err != nil {
-		return respPacking(nil, INVALID_PARAMS)
-	}
-	var assetID common.Uint256
-	if err := assetID.Deserialize(bytes.NewReader(tmp)); err != nil {
-		return respPacking(nil, INVALID_ASSET)
-	}
-	txn, err := MakePrepaidTransaction(wallet, assetID, assetValue, rates)
+	txn, err := MakePrepaidTransaction(wallet, ledger.DefaultLedger.Blockchain.AssetID, assetValue, rates)
 	if err != nil {
 		return respPacking(nil, INTERNAL_ERROR)
 	}
@@ -588,6 +578,46 @@ func prepaidAsset(s Serverer, params map[string]interface{}) map[string]interfac
 
 	txHash := txn.Hash()
 	return respPacking(common.BytesToHexString(txHash.ToArrayReverse()), SUCCESS)
+}
+
+// get prepaid asset info from system by address
+// params: ["vaule":<value>, "rates":<rates>]
+// return: {"result":<result>, "error":<errcode>}
+func getPrepaidInfo(s Serverer, params map[string]interface{}) map[string]interface{} {
+	if len(params) < 1 {
+		return respPacking(nil, INVALID_PARAMS)
+	}
+
+	addr, ok := params["address"].(string)
+	if !ok {
+		return respPacking(nil, INVALID_PARAMS)
+	}
+
+	var programHash common.Uint160
+	programHash, err := common.ToScriptHash(addr)
+	if err != nil {
+		return respPacking(nil, INVALID_PARAMS)
+	}
+
+	a, r, err := ledger.DefaultLedger.Store.GetPrepaidInfo(programHash)
+	type Ret struct {
+		Amount string
+		Rates  string
+	}
+	var ret *Ret
+	if err != nil {
+		ret = &Ret{
+			Amount: "0",
+			Rates:  "0",
+		}
+	} else {
+		ret = &Ret{
+			Amount: a.String(),
+			Rates:  r.String(),
+		}
+	}
+
+	return respPacking(ret, SUCCESS)
 }
 
 // withdraw withdraw asset from system
@@ -1041,18 +1071,19 @@ var InitialAPIHandlers = map[string]APIHandler{
 	"getnodestate":         {Handler: getNodeState, AccessCtrl: BIT_JSONRPC | BIT_RESTFUL},
 	"getchordringinfo":     {Handler: getChordRingInfo, AccessCtrl: BIT_JSONRPC | BIT_RESTFUL},
 	"setdebuginfo":         {Handler: setDebugInfo, AccessCtrl: BIT_RESTFUL},
-	"getbalance":           {Handler: getBalance, AccessCtrl: BIT_RESTFUL},
+	"getbalance":           {Handler: getBalance, AccessCtrl: BIT_RESTFUL | BIT_JSONRPC},
 	"registasset":          {Handler: registAsset, AccessCtrl: BIT_RESTFUL},
 	"issueasset":           {Handler: issueAsset, AccessCtrl: BIT_RESTFUL},
-	"sendtoaddress":        {Handler: sendToAddress, AccessCtrl: BIT_RESTFUL},
-	"prepaidasset":         {Handler: prepaidAsset, AccessCtrl: BIT_RESTFUL},
+	"sendtoaddress":        {Handler: sendToAddress, AccessCtrl: BIT_RESTFUL | BIT_JSONRPC},
+	"prepaid":              {Handler: prepaid, AccessCtrl: BIT_RESTFUL | BIT_JSONRPC},
+	"getprepaidinfo":       {Handler: getPrepaidInfo, AccessCtrl: BIT_RESTFUL | BIT_JSONRPC},
 	"withdrawasset":        {Handler: withdrawAsset, AccessCtrl: BIT_RESTFUL},
 	"commitpor":            {Handler: commitPor, AccessCtrl: BIT_RESTFUL},
-	"sigchaintest":         {Handler: sigchaintest, AccessCtrl: BIT_RESTFUL},
+	"sigchaintest":         {Handler: sigchaintest, AccessCtrl: BIT_RESTFUL | BIT_JSONRPC},
 	"gettotalissued":       {Handler: getTotalIssued, AccessCtrl: BIT_RESTFUL},
 	"getassetbyhash":       {Handler: getAssetByHash, AccessCtrl: BIT_RESTFUL},
-	"getbalancebyaddr":     {Handler: getBalanceByAddr, AccessCtrl: BIT_RESTFUL},
+	"getbalancebyaddr":     {Handler: getBalanceByAddr, AccessCtrl: BIT_RESTFUL | BIT_JSONRPC},
 	"getbalancebyasset":    {Handler: getBalanceByAsset, AccessCtrl: BIT_RESTFUL},
-	"getunspendoutput":     {Handler: getUnspendOutput, AccessCtrl: BIT_RESTFUL},
-	"getunspends":          {Handler: getUnspends, AccessCtrl: BIT_RESTFUL},
+	"getunspendoutput":     {Handler: getUnspendOutput, AccessCtrl: BIT_RESTFUL | BIT_JSONRPC},
+	"getunspends":          {Handler: getUnspends, AccessCtrl: BIT_RESTFUL | BIT_JSONRPC},
 }
