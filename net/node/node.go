@@ -563,7 +563,7 @@ func (node *node) GetChordRing() *chord.Ring {
 }
 
 func (node *node) blockHeaderSyncing(stopHash Uint256) {
-	noders := node.local.GetSyncFinishedNeighbors()
+	noders := node.local.GetNeighborNoder()
 	if len(noders) == 0 {
 		return
 	}
@@ -591,7 +591,7 @@ func (node *node) blockSyncing() {
 	var dValue int32
 	var reqCnt uint32
 	var i uint32
-	noders := node.local.GetSyncFinishedNeighbors()
+	noders := node.local.GetNeighborNoder()
 
 	for _, n := range noders {
 		if uint32(n.GetHeight()) <= currentBlkHeight {
